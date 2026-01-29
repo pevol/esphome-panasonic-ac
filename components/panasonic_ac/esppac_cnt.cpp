@@ -352,6 +352,11 @@ void PanasonicACCNT::set_data(bool set) {
       uint16_t power_consumption = determine_power_consumption(
           (int8_t) this->rx_buffer_[28], (int8_t) this->rx_buffer_[29], (int8_t) this->rx_buffer_[30]);
       this->update_current_power_consumption(power_consumption);
+
+      // Process power for cycling detection when in heating mode
+      if (this->mode == climate::CLIMATE_MODE_HEAT) {
+        this->process_power_for_cycling(power_consumption);
+      }
     }
   }
 
@@ -630,6 +635,154 @@ void PanasonicACCNT::on_mild_dry_change(bool state) {
   } else {
     ESP_LOGV(TAG, "Turning mild dry off");
     this->cmd[2] = 0x80;
+  }
+}
+
+/*
+ * Cycling detection
+ */
+
+void PanasonicACCNT::process_power_for_cycling(uint16_t power) {
+  // Only process if at least one cycling sensor is configured
+  if (this->cycling_detected_sensor_ == nullptr && this->cycle_count_sensor_ == nullptr)
+    return;
+
+  uint32_t now = millis();
+
+  switch (this->compressor_state_) {
+    case CompressorState::Unknown:
+      // Initial state - determine based on current power
+      if (power >= this->power_on_threshold_) {
+        this->compressor_state_ = CompressorState::On;
+        this->state_start_time_ = now;
+        this->last_on_start_ = now;
+        ESP_LOGD(TAG, "Cycling: Initial state ON (power=%dW)", power);
+      } else if (power <= this->power_off_threshold_) {
+        this->compressor_state_ = CompressorState::Off;
+        this->state_start_time_ = now;
+        ESP_LOGD(TAG, "Cycling: Initial state OFF (power=%dW)", power);
+      }
+      break;
+
+    case CompressorState::On:
+      // Check for transition to OFF
+      if (power <= this->power_off_threshold_) {
+        uint32_t on_duration = now - this->last_on_start_;
+        // Only count if ON duration meets minimum
+        if (on_duration >= this->min_on_duration_) {
+          this->last_on_duration_ = on_duration;
+          this->compressor_state_ = CompressorState::Off;
+          this->state_start_time_ = now;
+          ESP_LOGD(TAG, "Cycling: ON->OFF transition (on_duration=%dms, power=%dW)", on_duration, power);
+        }
+      }
+      break;
+
+    case CompressorState::Off:
+      // Check for transition to ON
+      if (power >= this->power_on_threshold_) {
+        uint32_t off_duration = now - this->state_start_time_;
+        // Only count if OFF duration meets minimum and we have a previous ON duration
+        if (off_duration >= this->min_off_duration_ && this->last_on_duration_ > 0) {
+          // Record this cycle
+          this->record_cycle(this->last_on_duration_, off_duration);
+          ESP_LOGI(TAG, "Heating cycle recorded: on=%ds, off=%ds",
+                   this->last_on_duration_ / 1000, off_duration / 1000);
+        }
+        this->compressor_state_ = CompressorState::On;
+        this->last_on_start_ = now;
+        this->state_start_time_ = now;
+        ESP_LOGD(TAG, "Cycling: OFF->ON transition (off_duration=%dms, power=%dW)", off_duration, power);
+      }
+      break;
+  }
+
+  // Update sensors
+  this->update_cycling_sensors();
+}
+
+void PanasonicACCNT::record_cycle(uint32_t on_duration, uint32_t off_duration) {
+  CycleRecord record;
+  record.timestamp = millis();
+  record.on_duration = on_duration;
+  record.off_duration = off_duration;
+
+  this->cycle_records_[this->cycle_record_head_] = record;
+  this->cycle_record_head_ = (this->cycle_record_head_ + 1) % MAX_CYCLE_RECORDS;
+  if (this->cycle_record_count_ < MAX_CYCLE_RECORDS) {
+    this->cycle_record_count_++;
+  }
+}
+
+uint8_t PanasonicACCNT::count_cycles_in_window() {
+  if (this->cycle_record_count_ == 0)
+    return 0;
+
+  uint32_t now = millis();
+  uint32_t window_start = now - this->time_window_;
+  uint8_t count = 0;
+
+  for (uint8_t i = 0; i < this->cycle_record_count_; i++) {
+    // Calculate actual index in ring buffer
+    uint8_t idx = (this->cycle_record_head_ - 1 - i + MAX_CYCLE_RECORDS) % MAX_CYCLE_RECORDS;
+    if (this->cycle_records_[idx].timestamp >= window_start) {
+      count++;
+    }
+  }
+
+  return count;
+}
+
+void PanasonicACCNT::update_cycling_sensors() {
+  uint8_t cycle_count = this->count_cycles_in_window();
+  bool cycling_detected = cycle_count >= this->cycle_threshold_;
+
+  // Update binary sensor
+  if (this->cycling_detected_sensor_ != nullptr) {
+    this->cycling_detected_sensor_->publish_state(cycling_detected);
+  }
+
+  // Update cycle count sensor
+  if (this->cycle_count_sensor_ != nullptr) {
+    this->cycle_count_sensor_->publish_state(cycle_count);
+  }
+
+  // Calculate and update average durations
+  if (this->cycle_record_count_ > 0) {
+    uint32_t now = millis();
+    uint32_t window_start = now - this->time_window_;
+    uint32_t total_on = 0;
+    uint32_t total_off = 0;
+    uint8_t count = 0;
+
+    for (uint8_t i = 0; i < this->cycle_record_count_; i++) {
+      uint8_t idx = (this->cycle_record_head_ - 1 - i + MAX_CYCLE_RECORDS) % MAX_CYCLE_RECORDS;
+      if (this->cycle_records_[idx].timestamp >= window_start) {
+        total_on += this->cycle_records_[idx].on_duration;
+        total_off += this->cycle_records_[idx].off_duration;
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      float avg_on = (float) total_on / count / 1000.0f;  // Convert to seconds
+      float avg_off = (float) total_off / count / 1000.0f;
+
+      if (this->avg_on_duration_sensor_ != nullptr) {
+        this->avg_on_duration_sensor_->publish_state(avg_on);
+      }
+      if (this->avg_off_duration_sensor_ != nullptr) {
+        this->avg_off_duration_sensor_->publish_state(avg_off);
+      }
+    }
+  } else {
+    // No cycles recorded, publish NaN
+    if (this->avg_on_duration_sensor_ != nullptr) {
+      this->avg_on_duration_sensor_->publish_state(NAN);
+    }
+    if (this->avg_off_duration_sensor_ != nullptr) {
+      this->avg_off_duration_sensor_->publish_state(NAN);
+    }
   }
 }
 

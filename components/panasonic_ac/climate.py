@@ -1,15 +1,17 @@
 from esphome.const import (
     DEVICE_CLASS_TEMPERATURE,
     DEVICE_CLASS_POWER,
+    DEVICE_CLASS_DURATION,
     STATE_CLASS_MEASUREMENT,
     UNIT_CELSIUS,
     UNIT_WATT,
+    UNIT_SECOND,
 )
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import uart, climate, sensor, select, switch
+from esphome.components import uart, climate, sensor, select, switch, binary_sensor
 
-AUTO_LOAD = ["switch", "sensor", "select"]
+AUTO_LOAD = ["switch", "sensor", "select", "binary_sensor"]
 DEPENDENCIES = ["uart"]
 
 panasonic_ac_ns = cg.esphome_ns.namespace("panasonic_ac")
@@ -42,6 +44,18 @@ CONF_MILD_DRY_SWITCH = "mild_dry_switch"
 CONF_CURRENT_POWER_CONSUMPTION = "current_power_consumption"
 CONF_WLAN = "wlan"
 CONF_CNT = "cnt"
+
+# Cycling detection configuration keys
+CONF_CYCLING_DETECTED = "cycling_detected"
+CONF_CYCLE_COUNT = "cycle_count"
+CONF_AVG_ON_DURATION = "avg_on_duration"
+CONF_AVG_OFF_DURATION = "avg_off_duration"
+CONF_CYCLING_POWER_ON_THRESHOLD = "cycling_power_on_threshold"
+CONF_CYCLING_POWER_OFF_THRESHOLD = "cycling_power_off_threshold"
+CONF_CYCLING_MIN_ON_DURATION = "cycling_min_on_duration"
+CONF_CYCLING_MIN_OFF_DURATION = "cycling_min_off_duration"
+CONF_CYCLING_TIME_WINDOW = "cycling_time_window"
+CONF_CYCLING_CYCLE_THRESHOLD = "cycling_cycle_threshold"
 
 HORIZONTAL_SWING_OPTIONS = ["auto", "left", "left_center", "center", "right_center", "right"]
 
@@ -76,6 +90,31 @@ PANASONIC_CNT_SCHEMA = {
         device_class=DEVICE_CLASS_POWER,
         state_class=STATE_CLASS_MEASUREMENT,
     ),
+    # Cycling detection sensors
+    cv.Optional(CONF_CYCLING_DETECTED): binary_sensor.binary_sensor_schema(),
+    cv.Optional(CONF_CYCLE_COUNT): sensor.sensor_schema(
+        accuracy_decimals=0,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ),
+    cv.Optional(CONF_AVG_ON_DURATION): sensor.sensor_schema(
+        unit_of_measurement=UNIT_SECOND,
+        accuracy_decimals=0,
+        device_class=DEVICE_CLASS_DURATION,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ),
+    cv.Optional(CONF_AVG_OFF_DURATION): sensor.sensor_schema(
+        unit_of_measurement=UNIT_SECOND,
+        accuracy_decimals=0,
+        device_class=DEVICE_CLASS_DURATION,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ),
+    # Cycling detection thresholds
+    cv.Optional(CONF_CYCLING_POWER_ON_THRESHOLD, default=200): cv.int_range(min=0, max=10000),
+    cv.Optional(CONF_CYCLING_POWER_OFF_THRESHOLD, default=100): cv.int_range(min=0, max=10000),
+    cv.Optional(CONF_CYCLING_MIN_ON_DURATION, default=30): cv.int_range(min=1, max=3600),
+    cv.Optional(CONF_CYCLING_MIN_OFF_DURATION, default=30): cv.int_range(min=1, max=3600),
+    cv.Optional(CONF_CYCLING_TIME_WINDOW, default=600): cv.int_range(min=60, max=7200),
+    cv.Optional(CONF_CYCLING_CYCLE_THRESHOLD, default=3): cv.int_range(min=1, max=20),
 }
 
 CONFIG_SCHEMA = cv.typed_schema(
@@ -127,3 +166,29 @@ async def to_code(config):
     if CONF_CURRENT_POWER_CONSUMPTION in config:
         sens = await sensor.new_sensor(config[CONF_CURRENT_POWER_CONSUMPTION])
         cg.add(var.set_current_power_consumption_sensor(sens))
+
+    # Cycling detection sensors
+    if CONF_CYCLING_DETECTED in config:
+        sens = await binary_sensor.new_binary_sensor(config[CONF_CYCLING_DETECTED])
+        cg.add(var.set_cycling_detected_binary_sensor(sens))
+
+    if CONF_CYCLE_COUNT in config:
+        sens = await sensor.new_sensor(config[CONF_CYCLE_COUNT])
+        cg.add(var.set_cycle_count_sensor(sens))
+
+    if CONF_AVG_ON_DURATION in config:
+        sens = await sensor.new_sensor(config[CONF_AVG_ON_DURATION])
+        cg.add(var.set_avg_on_duration_sensor(sens))
+
+    if CONF_AVG_OFF_DURATION in config:
+        sens = await sensor.new_sensor(config[CONF_AVG_OFF_DURATION])
+        cg.add(var.set_avg_off_duration_sensor(sens))
+
+    # Cycling detection thresholds (always set for CNT type)
+    if config.get("type") == CONF_CNT:
+        cg.add(var.set_cycling_power_on_threshold(config[CONF_CYCLING_POWER_ON_THRESHOLD]))
+        cg.add(var.set_cycling_power_off_threshold(config[CONF_CYCLING_POWER_OFF_THRESHOLD]))
+        cg.add(var.set_cycling_min_on_duration(config[CONF_CYCLING_MIN_ON_DURATION]))
+        cg.add(var.set_cycling_min_off_duration(config[CONF_CYCLING_MIN_OFF_DURATION]))
+        cg.add(var.set_cycling_time_window(config[CONF_CYCLING_TIME_WINDOW]))
+        cg.add(var.set_cycling_cycle_threshold(config[CONF_CYCLING_CYCLE_THRESHOLD]))
