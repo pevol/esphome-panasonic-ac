@@ -471,6 +471,12 @@ bool PanasonicACCNT::verify_packet() {
 
 void PanasonicACCNT::handle_packet() {
   if (this->rx_buffer_[0] == POLL_HEADER) {
+    // Poll response must be at least 31 bytes to access all required fields
+    if (this->rx_buffer_.size() < 31) {
+      ESP_LOGW(TAG, "Poll response too short: %d bytes", this->rx_buffer_.size());
+      return;
+    }
+
     this->data = std::vector<uint8_t>(this->rx_buffer_.begin() + 2, this->rx_buffer_.begin() + 12);
 
     this->set_data(true);
