@@ -110,24 +110,24 @@ void PanasonicACWLAN::control(const climate::ClimateCall &call) {
   if (call.has_custom_fan_mode()) {
     ESP_LOGV(TAG, "Requested fan mode change");
 
-    const char *fanMode = call.get_custom_fan_mode();
+    std::string fanMode = std::string(call.get_custom_fan_mode());
 
-    if (strcmp(fanMode, "Automatic") == 0) {
+    if (fanMode == "Automatic") {
       set_value(0xB2, 0x41);
       set_value(0xA0, 0x41);
-    } else if (strcmp(fanMode, "1") == 0) {
+    } else if (fanMode == "1") {
       set_value(0xB2, 0x41);
       set_value(0xA0, 0x32);
-    } else if (strcmp(fanMode, "2") == 0) {
+    } else if (fanMode == "2") {
       set_value(0xB2, 0x41);
       set_value(0xA0, 0x33);
-    } else if (strcmp(fanMode, "3") == 0) {
+    } else if (fanMode == "3") {
       set_value(0xB2, 0x41);
       set_value(0xA0, 0x34);
-    } else if (strcmp(fanMode, "4") == 0) {
+    } else if (fanMode == "4") {
       set_value(0xB2, 0x41);
       set_value(0xA0, 0x35);
-    } else if (strcmp(fanMode, "5") == 0) {
+    } else if (fanMode == "5") {
       set_value(0xB2, 0x41);
       set_value(0xA0, 0x36);
     } else
@@ -164,17 +164,17 @@ void PanasonicACWLAN::control(const climate::ClimateCall &call) {
   if (call.has_custom_preset()) {
     ESP_LOGV(TAG, "Requested preset change");
 
-    const char *preset = call.get_custom_preset();
+    std::string preset = std::string(call.get_custom_preset());
 
-    if (strcmp(preset, "Normal") == 0) {
+    if (preset == "Normal") {
       set_value(0xB2, 0x41);
       set_value(0x35, 0x42);
       set_value(0x34, 0x42);
-    } else if (strcmp(preset, "Powerful") == 0) {
+    } else if (preset == "Powerful") {
       set_value(0xB2, 0x42);
       set_value(0x35, 0x42);
       set_value(0x34, 0x42);
-    } else if (strcmp(preset, "Quiet") == 0) {
+    } else if (preset == "Quiet") {
       set_value(0xB2, 0x43);
       set_value(0x35, 0x42);
       set_value(0x34, 0x42);
