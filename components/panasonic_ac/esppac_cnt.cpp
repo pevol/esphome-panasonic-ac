@@ -248,11 +248,8 @@ void PanasonicACCNT::control(const climate::ClimateCall &call) {
   if (call.has_custom_fan_mode()) {
     ESP_LOGV(TAG, "Requested fan mode change");
 
-    auto current_preset = this->custom_preset;
-    if (current_preset.has_value() && current_preset.value() != "Normal") {
-      ESP_LOGV(TAG, "Resetting preset");
-      this->cmd[5] = (this->cmd[5] & 0xF0);  // Clear right nib for normal mode
-    }
+    // Reset preset to Normal when changing fan mode (clear powerful/quiet)
+    this->cmd[5] = (this->cmd[5] & 0xF0);
 
     std::string fanMode = std::string(call.get_custom_fan_mode());
 
