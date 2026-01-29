@@ -600,10 +600,10 @@ void PanasonicACCNT::on_econavi_change(bool state) {
 
   if (state) {
     ESP_LOGV(TAG, "Turning econavi mode on");
-    this->cmd[5] = 0x10;
+    this->cmd[5] = (this->cmd[5] & 0xEF) | 0x10;  // Set bit 4, preserve other bits
   } else {
     ESP_LOGV(TAG, "Turning econavi mode off");
-    this->cmd[5] = 0x00;
+    this->cmd[5] = (this->cmd[5] & 0xEF);  // Clear bit 4, preserve other bits
   }
 }
 
