@@ -47,10 +47,10 @@ void PanasonicAC::loop() {
 void PanasonicAC::read_data() {
   while (available())  // Read while data is available
   {
-    // if (this->receive_buffer_index >= BUFFER_SIZE) {
-    //   ESP_LOGE(TAG, "Receive buffer overflow");
-    //   receiveBufferIndex = 0;
-    // }
+    if (this->rx_buffer_.size() >= BUFFER_SIZE) {
+      ESP_LOGE(TAG, "Receive buffer overflow, clearing buffer");
+      this->rx_buffer_.clear();
+    }
 
     uint8_t c;
     this->read_byte(&c);  // Store in receive buffer
