@@ -63,6 +63,12 @@ class PanasonicACCNT : public PanasonicAC {
   void set_cycling_time_window(uint32_t window) { time_window_ = window * 1000; }  // Convert s to ms
   void set_cycling_cycle_threshold(uint8_t threshold) { cycle_threshold_ = threshold; }
 
+  // Temperature auto-adjustment setters
+  void set_temp_adjustment_switch(switch_::Switch *s);
+  void set_temp_adjustment_sensor(sensor::Sensor *s) { temp_adjustment_sensor_ = s; }
+  void set_cycling_max_temp_adjustment(float max) { max_temp_adjustment_ = max; }
+  void set_cycling_step_down_delay(uint32_t delay_s) { temp_step_down_delay_ = delay_s * 1000; }
+
  protected:
   ACState state_ = ACState::Initializing;  // Stores the internal state of the AC, used during initialization
 
@@ -114,11 +120,6 @@ class PanasonicACCNT : public PanasonicAC {
   float max_temp_adjustment_ = 2.0f;       // Maximum allowed offset (°C)
   uint32_t temp_step_down_delay_ = 1800000;// Time with no cycling before stepping down (ms)
   uint32_t last_cycle_recorded_time_ = 0;  // millis() when last cycle was recorded
-
-  void set_temp_adjustment_switch(switch_::Switch *s);
-  void set_temp_adjustment_sensor(sensor::Sensor *s) { temp_adjustment_sensor_ = s; }
-  void set_cycling_max_temp_adjustment(float max) { max_temp_adjustment_ = max; }
-  void set_cycling_step_down_delay(uint32_t delay_s) { temp_step_down_delay_ = delay_s * 1000; }
 
   // Cycling detection methods
   void process_power_for_cycling(uint16_t power);
