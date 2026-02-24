@@ -106,11 +106,29 @@ class PanasonicACCNT : public PanasonicAC {
   uint8_t cycle_record_head_ = 0;       // Next write position
   uint8_t cycle_record_count_ = 0;      // Number of valid records
 
+  // Temperature auto-adjustment
+  switch_::Switch *temp_adjustment_switch_ = nullptr;  // HA switch to enable feature (default OFF)
+  sensor::Sensor *temp_adjustment_sensor_ = nullptr;   // Reports current offset to HA
+  float base_temperature_ = NAN;            // User's intended setpoint (NAN = uninitialized)
+  float temp_adjustment_offset_ = 0.0f;    // Current auto-adjustment (°C, always >= 0)
+  float max_temp_adjustment_ = 2.0f;       // Maximum allowed offset (°C)
+  uint32_t temp_step_down_delay_ = 1800000;// Time with no cycling before stepping down (ms)
+  uint32_t last_cycle_recorded_time_ = 0;  // millis() when last cycle was recorded
+
+  void set_temp_adjustment_switch(switch_::Switch *s);
+  void set_temp_adjustment_sensor(sensor::Sensor *s) { temp_adjustment_sensor_ = s; }
+  void set_cycling_max_temp_adjustment(float max) { max_temp_adjustment_ = max; }
+  void set_cycling_step_down_delay(uint32_t delay_s) { temp_step_down_delay_ = delay_s * 1000; }
+
   // Cycling detection methods
   void process_power_for_cycling(uint16_t power);
   void record_cycle(uint32_t on_duration, uint32_t off_duration);
   uint8_t count_cycles_in_window();
   void update_cycling_sensors();
+  void apply_temp_step_up();
+  void apply_temp_step_down();
+  void apply_temp_adjustment();
+  void reset_temp_adjustment();
 };
 
 }  // namespace CNT

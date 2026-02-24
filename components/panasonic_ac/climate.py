@@ -57,6 +57,12 @@ CONF_CYCLING_MIN_OFF_DURATION = "cycling_min_off_duration"
 CONF_CYCLING_TIME_WINDOW = "cycling_time_window"
 CONF_CYCLING_CYCLE_THRESHOLD = "cycling_cycle_threshold"
 
+# Temperature auto-adjustment configuration keys
+CONF_TEMP_ADJUSTMENT_SWITCH = "temp_adjustment_switch"
+CONF_TEMP_ADJUSTMENT = "temp_adjustment"
+CONF_CYCLING_MAX_TEMP_ADJUSTMENT = "cycling_max_temp_adjustment"
+CONF_CYCLING_STEP_DOWN_DELAY = "cycling_step_down_delay"
+
 HORIZONTAL_SWING_OPTIONS = ["auto", "left", "left_center", "center", "right_center", "right"]
 
 VERTICAL_SWING_OPTIONS = ["swing", "auto", "up", "up_center", "center", "down_center", "down"]
@@ -115,6 +121,16 @@ PANASONIC_CNT_SCHEMA = {
     cv.Optional(CONF_CYCLING_MIN_OFF_DURATION, default=30): cv.int_range(min=1, max=3600),
     cv.Optional(CONF_CYCLING_TIME_WINDOW, default=600): cv.int_range(min=60, max=7200),
     cv.Optional(CONF_CYCLING_CYCLE_THRESHOLD, default=3): cv.int_range(min=1, max=20),
+    # Temperature auto-adjustment
+    cv.Optional(CONF_TEMP_ADJUSTMENT_SWITCH): SWITCH_SCHEMA,
+    cv.Optional(CONF_TEMP_ADJUSTMENT): sensor.sensor_schema(
+        unit_of_measurement=UNIT_CELSIUS,
+        accuracy_decimals=1,
+        device_class=DEVICE_CLASS_TEMPERATURE,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ),
+    cv.Optional(CONF_CYCLING_MAX_TEMP_ADJUSTMENT, default=2.0): cv.float_range(min=0.5, max=5.0),
+    cv.Optional(CONF_CYCLING_STEP_DOWN_DELAY, default=1800): cv.int_range(min=60, max=86400),
 }
 
 CONFIG_SCHEMA = cv.typed_schema(
@@ -192,3 +208,16 @@ async def to_code(config):
         cg.add(var.set_cycling_min_off_duration(config[CONF_CYCLING_MIN_OFF_DURATION]))
         cg.add(var.set_cycling_time_window(config[CONF_CYCLING_TIME_WINDOW]))
         cg.add(var.set_cycling_cycle_threshold(config[CONF_CYCLING_CYCLE_THRESHOLD]))
+        cg.add(var.set_cycling_max_temp_adjustment(config[CONF_CYCLING_MAX_TEMP_ADJUSTMENT]))
+        cg.add(var.set_cycling_step_down_delay(config[CONF_CYCLING_STEP_DOWN_DELAY]))
+
+    # Temperature auto-adjustment
+    if CONF_TEMP_ADJUSTMENT_SWITCH in config:
+        conf = config[CONF_TEMP_ADJUSTMENT_SWITCH]
+        a_switch = await switch.new_switch(conf)
+        await cg.register_component(a_switch, conf)
+        cg.add(var.set_temp_adjustment_switch(a_switch))
+
+    if CONF_TEMP_ADJUSTMENT in config:
+        sens = await sensor.new_sensor(config[CONF_TEMP_ADJUSTMENT])
+        cg.add(var.set_temp_adjustment_sensor(sens))

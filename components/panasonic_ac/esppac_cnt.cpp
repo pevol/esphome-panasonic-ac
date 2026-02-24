@@ -241,8 +241,13 @@ void PanasonicACCNT::control(const climate::ClimateCall &call) {
   }
 
   if (call.get_target_temperature().has_value()) {
-    ESP_LOGV(TAG, "Requested target temp change to %.2f, %.2f including offset", *call.get_target_temperature(), *call.get_target_temperature() - this->current_temperature_offset_);
-    this->cmd[1] = (*call.get_target_temperature() - this->current_temperature_offset_) / TEMPERATURE_STEP;
+    float requested = *call.get_target_temperature();
+    this->base_temperature_ = requested;  // Track user's intended setpoint
+    float adjusted = requested + this->temp_adjustment_offset_;
+    adjusted = std::min(adjusted, (float) MAX_TEMPERATURE);
+    ESP_LOGV(TAG, "Requested target temp change to %.1f (adjusted: %.1f, offset: +%.1f)",
+             requested, adjusted, this->temp_adjustment_offset_);
+    this->cmd[1] = (adjusted - this->current_temperature_offset_) / TEMPERATURE_STEP;
   }
 
   if (call.has_custom_fan_mode()) {
@@ -311,7 +316,25 @@ void PanasonicACCNT::control(const climate::ClimateCall &call) {
  * Set the data array to the fields
  */
 void PanasonicACCNT::set_data(bool set) {
+  climate::ClimateMode prev_mode = this->mode;
   this->mode = determine_mode(this->data[0]);
+
+  // Initialize base temperature from AC state on first poll
+  if (std::isnan(this->base_temperature_) && !std::isnan(this->target_temperature)) {
+    this->base_temperature_ = this->target_temperature;
+    ESP_LOGD(TAG, "Cycling: initialized base temperature to %.1f°C", this->base_temperature_);
+  }
+
+  // Reset offset when leaving HEAT mode
+  if (prev_mode == climate::CLIMATE_MODE_HEAT && this->mode != climate::CLIMATE_MODE_HEAT) {
+    if (this->temp_adjustment_offset_ > 0.0f) {
+      this->temp_adjustment_offset_ = 0.0f;
+      this->compressor_state_ = CompressorState::Unknown;
+      if (this->temp_adjustment_sensor_ != nullptr)
+        this->temp_adjustment_sensor_->publish_state(0.0f);
+      ESP_LOGI(TAG, "Cycling: reset temp offset (leaving HEAT mode)");
+    }
+  }
   this->set_custom_fan_mode_(determine_fan_speed(this->data[3]));
 
   std::string verticalSwing = determine_vertical_swing(this->data[4]);
@@ -710,6 +733,13 @@ void PanasonicACCNT::record_cycle(uint32_t on_duration, uint32_t off_duration) {
   if (this->cycle_record_count_ < MAX_CYCLE_RECORDS) {
     this->cycle_record_count_++;
   }
+
+  this->last_cycle_recorded_time_ = millis();
+
+  // Step up temperature if cycling threshold is met and feature is enabled
+  if (this->count_cycles_in_window() >= this->cycle_threshold_) {
+    this->apply_temp_step_up();
+  }
 }
 
 uint8_t PanasonicACCNT::count_cycles_in_window() {
@@ -734,6 +764,15 @@ uint8_t PanasonicACCNT::count_cycles_in_window() {
 void PanasonicACCNT::update_cycling_sensors() {
   uint8_t cycle_count = this->count_cycles_in_window();
   bool cycling_detected = cycle_count >= this->cycle_threshold_;
+
+  // Step down temperature offset when cycling has stopped
+  if (this->temp_adjustment_offset_ > 0.0f && this->last_cycle_recorded_time_ > 0) {
+    if (millis() - this->last_cycle_recorded_time_ >= this->temp_step_down_delay_) {
+      this->apply_temp_step_down();
+      // Reset timer so next step-down waits another full delay
+      this->last_cycle_recorded_time_ = millis();
+    }
+  }
 
   // Update binary sensor
   if (this->cycling_detected_sensor_ != nullptr) {
@@ -782,6 +821,70 @@ void PanasonicACCNT::update_cycling_sensors() {
       this->avg_off_duration_sensor_->publish_state(NAN);
     }
   }
+}
+
+/*
+ * Temperature auto-adjustment
+ */
+
+void PanasonicACCNT::set_temp_adjustment_switch(switch_::Switch *s) {
+  this->temp_adjustment_switch_ = s;
+  s->add_on_state_callback([this](bool enabled) {
+    if (!enabled) {
+      this->reset_temp_adjustment();
+    }
+  });
+}
+
+void PanasonicACCNT::apply_temp_step_up() {
+  if (this->temp_adjustment_switch_ == nullptr || !this->temp_adjustment_switch_->state)
+    return;
+  if (std::isnan(this->base_temperature_))
+    return;
+  if (this->temp_adjustment_offset_ >= this->max_temp_adjustment_)
+    return;
+
+  this->temp_adjustment_offset_ += TEMPERATURE_STEP;
+  this->temp_adjustment_offset_ = std::min(this->temp_adjustment_offset_, this->max_temp_adjustment_);
+  ESP_LOGI(TAG, "Cycling: stepping up temp offset to +%.1f°C (base=%.1f → adjusted=%.1f°C)",
+           this->temp_adjustment_offset_, this->base_temperature_,
+           this->base_temperature_ + this->temp_adjustment_offset_);
+  this->apply_temp_adjustment();
+}
+
+void PanasonicACCNT::apply_temp_step_down() {
+  if (std::isnan(this->base_temperature_) || this->temp_adjustment_offset_ <= 0.0f)
+    return;
+
+  this->temp_adjustment_offset_ -= TEMPERATURE_STEP;
+  this->temp_adjustment_offset_ = std::max(this->temp_adjustment_offset_, 0.0f);
+  ESP_LOGI(TAG, "Cycling: stepping down temp offset to +%.1f°C (base=%.1f → adjusted=%.1f°C)",
+           this->temp_adjustment_offset_, this->base_temperature_,
+           this->base_temperature_ + this->temp_adjustment_offset_);
+  this->apply_temp_adjustment();
+}
+
+void PanasonicACCNT::apply_temp_adjustment() {
+  float adjusted = this->base_temperature_ + this->temp_adjustment_offset_;
+  adjusted = std::min(adjusted, (float) MAX_TEMPERATURE);
+  adjusted = std::max(adjusted, (float) MIN_TEMPERATURE);
+
+  if (this->cmd.empty())
+    this->cmd = this->data;
+  this->cmd[1] = (adjusted - this->current_temperature_offset_) / TEMPERATURE_STEP;
+
+  if (this->temp_adjustment_sensor_ != nullptr)
+    this->temp_adjustment_sensor_->publish_state(this->temp_adjustment_offset_);
+}
+
+void PanasonicACCNT::reset_temp_adjustment() {
+  if (this->temp_adjustment_offset_ == 0.0f)
+    return;
+
+  this->temp_adjustment_offset_ = 0.0f;
+  ESP_LOGI(TAG, "Cycling: temp adjustment disabled, restoring base temperature %.1f°C",
+           this->base_temperature_);
+  this->apply_temp_adjustment();
 }
 
 }  // namespace CNT
